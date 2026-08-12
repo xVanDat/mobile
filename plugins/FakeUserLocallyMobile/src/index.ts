@@ -1,5 +1,5 @@
 import { findByProps, findByStoreName } from "@vendetta/metro";
-import { FluxDispatcher, UserStore, clipboard } from "@vendetta/metro/common";
+import { FluxDispatcher, clipboard } from "@vendetta/metro/common";
 import { before, after, instead } from "@vendetta/patcher";
 import { showToast } from "@vendetta/ui/toasts";
 import { createProxy } from "@vendetta/storage";
@@ -16,12 +16,43 @@ const { proxy: storage } = createProxy({
 
 export { storage };
 
+// Dynamic store and module resolvers with robust fallbacks
+const getUserStore = () => findByStoreName("UserStore") || findByProps("getCurrentUser") || findByProps("getUser");
 const getRelationshipStore = () => findByStoreName("RelationshipStore") || findByProps("getSince");
 const getGuildMemberStore = () => findByStoreName("GuildMemberStore") || findByProps("getMember");
 const getUserProfileStore = () => findByStoreName("UserProfileStore") || findByProps("getUserProfile");
 const getSnowflakeUtils = () => findByProps("extractTimestamp");
 const getUserUtils = () => findByProps("getUser", "fetchProfile") || findByProps("getUser");
 const getProfileActions = () => findByProps("fetchProfile");
+
+export function getCurrentUser(): any {
+    const store = getUserStore();
+    if (!store) return null;
+    if (typeof store.getCurrentUser === "function") {
+        const u = store.getCurrentUser();
+        if (u) return u;
+    }
+    if (typeof store.getCurrentUserId === "function") {
+        const id = store.getCurrentUserId();
+        if (id && typeof store.getUser === "function") {
+            const u = store.getUser(id);
+            if (u) return u;
+        }
+    }
+    return null;
+}
+
+export function getUser(id: string): any {
+    const store = getUserStore();
+    if (!store) return null;
+    if (typeof store.getUser === "function") {
+        const u = store.getUser(id);
+        if (u) return u;
+    }
+    if (store._users && store._users[id]) return store._users[id];
+    if (store.users && store.users[id]) return store.users[id];
+    return null;
+}
 
 let unpatches: (() => void)[] = [];
 let originalUserProps: Record<string, any> = {};
@@ -46,7 +77,7 @@ let boundGetBannerURL: any = null;
 
 function processCopyText(text: string): string {
     if (!hasSpoofed || !storage.copySpoofedId) return text;
-    const realUser: any = UserStore?.getCurrentUser?.();
+    const realUser: any = getCurrentUser();
     const targetId = storage.targetUserId;
     if (realUser && targetId && typeof text === "string" && text.includes(realUser.id)) {
         return text.replaceAll(realUser.id, targetId);
@@ -57,8 +88,8 @@ function processCopyText(text: string): string {
 export function enforceSpoof() {
     if (!hasSpoofed || isEnforcing) return;
     const targetId = storage.targetUserId;
-    const realUser: any = UserStore?.getCurrentUser?.();
-    const targetUser: any = UserStore?.getUser?.(targetId);
+    const realUser: any = getCurrentUser();
+    const targetUser: any = getUser(targetId);
 
     if (realUser && targetUser) {
         let changed = false;
@@ -116,7 +147,7 @@ export async function spoofUser() {
         return;
     }
 
-    const realUser: any = UserStore?.getCurrentUser?.();
+    const realUser: any = getCurrentUser();
     if (!realUser) {
         showToast("[FakeUserLocallyMobile] Không tìm thấy User hiện tại");
         return;
@@ -133,7 +164,7 @@ export async function spoofUser() {
             try { await ProfileActions.fetchProfile(targetId, { guildId: undefined, withMutualGuilds: false }); } catch (_) {}
         }
 
-        const targetUser: any = UserStore?.getUser?.(targetId);
+        const targetUser: any = getUser(targetId);
         if (!targetUser) {
             showToast("[FakeUserLocallyMobile] Lỗi: Không thể lấy dữ liệu mục tiêu. ID có đúng không?");
             return;
@@ -186,7 +217,7 @@ export async function spoofUser() {
 export function restoreOriginalUser() {
     if (!hasSpoofed) return;
     try {
-        const realUser: any = UserStore?.getCurrentUser?.();
+        const realUser: any = getCurrentUser();
         if (realUser) {
             for (const prop of Object.keys(originalUserProps)) {
                 try { realUser[prop] = originalUserProps[prop]; } catch (_) {}
@@ -226,7 +257,7 @@ export function onLoad() {
         unpatches.push(
             instead("extractTimestamp", SnowflakeUtils, (args, orig) => {
                 const [id] = args;
-                const realUser: any = UserStore?.getCurrentUser?.();
+                const realUser: any = getCurrentUser();
                 if (hasSpoofed && realUser && id === realUser.id && storage.customJoinedDiscord) {
                     const parsed = new Date(storage.customJoinedDiscord).getTime();
                     if (!isNaN(parsed)) return parsed;
@@ -241,7 +272,7 @@ export function onLoad() {
         unpatches.push(
             after("getMember", GuildMemberStore, (args, member) => {
                 const [, userId] = args;
-                const realUser: any = UserStore?.getCurrentUser?.();
+                const realUser: any = getCurrentUser();
                 if (hasSpoofed && realUser && userId === realUser.id && member && storage.customJoinedServer) {
                     const parsed = new Date(storage.customJoinedServer);
                     if (!isNaN(parsed.getTime())) {
@@ -258,7 +289,7 @@ export function onLoad() {
         unpatches.push(
             instead("getSince", RelationshipStore, (args, orig) => {
                 const [userId] = args;
-                const realUser: any = UserStore?.getCurrentUser?.();
+                const realUser: any = getCurrentUser();
                 if (hasSpoofed && realUser && userId === realUser.id && storage.customFriendsSince) {
                     const parsed = new Date(storage.customFriendsSince);
                     if (!isNaN(parsed.getTime())) {
@@ -276,11 +307,11 @@ export function onLoad() {
             unpatches.push(
                 after("getUserProfile", UserProfileStore, (args, profile) => {
                     const [userId] = args;
-                    const realUser: any = UserStore?.getCurrentUser?.();
+                    const realUser: any = getCurrentUser();
                     if (hasSpoofed && realUser && userId === realUser.id) {
                         const targetId = storage.targetUserId;
                         const targetProfile = targetId ? UserProfileStore.getUserProfile(targetId) : null;
-                        const targetUser: any = targetId ? UserStore?.getUser?.(targetId) : null;
+                        const targetUser: any = targetId ? getUser(targetId) : null;
                         if (profile) {
                             const targetBio = targetProfile?.bio ?? targetUser?.bio;
                             if (targetBio !== undefined) profile.bio = targetBio;
@@ -297,11 +328,11 @@ export function onLoad() {
             unpatches.push(
                 after("getGuildMemberProfile", UserProfileStore, (args, profile) => {
                     const [userId] = args;
-                    const realUser: any = UserStore?.getCurrentUser?.();
+                    const realUser: any = getCurrentUser();
                     if (hasSpoofed && realUser && userId === realUser.id) {
                         const targetId = storage.targetUserId;
                         const targetProfile = targetId ? UserProfileStore.getUserProfile(targetId) : null;
-                        const targetUser: any = targetId ? UserStore?.getUser?.(targetId) : null;
+                        const targetUser: any = targetId ? getUser(targetId) : null;
                         if (profile) {
                             const targetBio = targetProfile?.bio ?? targetUser?.bio;
                             if (targetBio !== undefined) profile.bio = targetBio;
@@ -315,6 +346,7 @@ export function onLoad() {
         }
     }
 
+    const UserStore = getUserStore();
     if (UserStore?.addChangeListener) {
         UserStore.addChangeListener(enforceSpoof);
     }
@@ -328,6 +360,7 @@ export function onUnload() {
     unpatches.forEach(u => u?.());
     unpatches = [];
 
+    const UserStore = getUserStore();
     if (UserStore?.removeChangeListener) {
         try { UserStore.removeChangeListener(enforceSpoof); } catch (_) {}
     }
