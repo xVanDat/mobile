@@ -2,8 +2,18 @@ import { findByProps, findByStoreName } from "@vendetta/metro";
 import { FluxDispatcher, UserStore, clipboard } from "@vendetta/metro/common";
 import { before, after, instead } from "@vendetta/patcher";
 import { showToast } from "@vendetta/ui/toasts";
-import { createStorage } from "@vendetta/storage";
+import { storage } from "@vendetta/plugin";
 import Settings from "./Settings";
+
+// Set default values in plugin storage
+storage.targetUserId ??= "";
+storage.copySpoofedId ??= true;
+storage.hideBadges ??= false;
+storage.customJoinedDiscord ??= "";
+storage.customJoinedServer ??= "";
+storage.customFriendsSince ??= "";
+
+export { storage };
 
 const getRelationshipStore = () => findByStoreName("RelationshipStore") || findByProps("getSince");
 const getGuildMemberStore = () => findByStoreName("GuildMemberStore") || findByProps("getMember");
@@ -11,22 +21,6 @@ const getUserProfileStore = () => findByStoreName("UserProfileStore") || findByP
 const getSnowflakeUtils = () => findByProps("extractTimestamp");
 const getUserUtils = () => findByProps("getUser", "fetchProfile") || findByProps("getUser");
 const getProfileActions = () => findByProps("fetchProfile");
-
-export const storage = createStorage<{
-    targetUserId: string;
-    copySpoofedId: boolean;
-    hideBadges: boolean;
-    customJoinedDiscord: string;
-    customJoinedServer: string;
-    customFriendsSince: string;
-}>({
-    targetUserId: "",
-    copySpoofedId: true,
-    hideBadges: false,
-    customJoinedDiscord: "",
-    customJoinedServer: "",
-    customFriendsSince: ""
-});
 
 let unpatches: (() => void)[] = [];
 let originalUserProps: Record<string, any> = {};
