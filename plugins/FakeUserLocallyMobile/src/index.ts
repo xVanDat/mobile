@@ -2,16 +2,17 @@ import { findByProps, findByStoreName } from "@vendetta/metro";
 import { FluxDispatcher, UserStore, clipboard } from "@vendetta/metro/common";
 import { before, after, instead } from "@vendetta/patcher";
 import { showToast } from "@vendetta/ui/toasts";
-import { storage } from "@vendetta/plugin";
+import { createProxy } from "@vendetta/storage";
 import Settings from "./Settings";
 
-// Set default values in plugin storage
-storage.targetUserId ??= "";
-storage.copySpoofedId ??= true;
-storage.hideBadges ??= false;
-storage.customJoinedDiscord ??= "";
-storage.customJoinedServer ??= "";
-storage.customFriendsSince ??= "";
+const { proxy: storage } = createProxy({
+    targetUserId: "",
+    copySpoofedId: true,
+    hideBadges: false,
+    customJoinedDiscord: "",
+    customJoinedServer: "",
+    customFriendsSince: ""
+});
 
 export { storage };
 
