@@ -1,0 +1,25 @@
+{
+  "name": "kettu-mobile-plugins",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mobile plugins repository for Kettu, Vendetta, Bunny, and Revenge client mods",
+  "main": "index.js",
+  "scripts": {
+    "build": "npx tsx scripts/build.ts",
+    "build:dev": "npx tsx scripts/build.ts --dev",
+    "build:bun": "bun scripts/build.ts"
+  },
+  "dependencies": {
+    "@rollup/plugin-commonjs": "^29.0.3",
+    "@rollup/plugin-node-resolve": "^16.0.3",
+    "@swc/core": "^1.15.47",
+    "rollup": "^4.62.4",
+    "rollup-plugin-esbuild": "^6.2.1",
+    "rollup-plugin-tsconfig-paths": "^1.5.2",
+    "vendetta-types": "^2.4.21"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.0.0"
+  }
+}
