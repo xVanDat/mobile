@@ -43,6 +43,7 @@ const getSnowflakeUtils = () => findByProps("extractTimestamp");
 const getUserUtils = () => findByProps("getUser", "fetchProfile") || findByProps("getUser");
 const getProfileActions = () => findByProps("fetchProfile");
 const getIconUtils = () => findByProps("getUserAvatarURL") || findByProps("getUserAvatarSource") || findByProps("getAvatarURL");
+const getNameUtils = () => findByProps("getName") || findByProps("getGlobalName");
 const getHTTP = () => findByProps("get", "post") || findByProps("getAPIBaseURL");
 
 export function getCurrentUser(): any {
@@ -111,6 +112,7 @@ let isEnforcing = false;
 const visualProps = [
     "username",
     "globalName",
+    "global_name",
     "avatar",
     "avatarDecoration",
     "avatarDecorationData",
@@ -156,6 +158,12 @@ export function enforceSpoof() {
                         replacedUser.bio = targetBio;
                         changed = true;
                     }
+                } else if (prop === "global_name" || prop === "globalName") {
+                    const targetName = targetUser.globalName || targetUser.global_name || targetUser.username;
+                    if (targetName && replacedUser[prop] !== targetName) {
+                        replacedUser[prop] = targetName;
+                        changed = true;
+                    }
                 } else {
                     if (targetUser[prop] !== undefined && replacedUser[prop] !== targetUser[prop]) {
                         replacedUser[prop] = targetUser[prop];
@@ -163,6 +171,11 @@ export function enforceSpoof() {
                     }
                 }
             }
+
+            replacedUser.getGlobalName = () => {
+                const tUser = getUser(targetId);
+                return tUser?.globalName || tUser?.global_name || tUser?.username || originalUserProps.globalName;
+            };
 
             replacedUser.getAvatarURL = (guildId?: string, size?: number, canAnimate?: boolean) => {
                 const tUser = getUser(targetId);
@@ -200,7 +213,7 @@ async function fetchUserData(id: string): Promise<any> {
         }
 
         let user = getUser(id);
-        if (user && user.avatar) return user;
+        if (user && (user.avatar || user.globalName || user.global_name)) return user;
 
         const HTTP = getHTTP();
         if (HTTP?.get) {
@@ -211,6 +224,7 @@ async function fetchUserData(id: string): Promise<any> {
                     id: body.id,
                     username: body.username,
                     globalName: body.global_name || body.username,
+                    global_name: body.global_name || body.username,
                     avatar: body.avatar,
                     avatarDecoration: body.avatar_decoration_data?.asset,
                     avatarDecorationData: body.avatar_decoration_data,
@@ -261,6 +275,7 @@ export async function spoofUser() {
             }
             originalUserProps.getAvatarURL = replacedUser.getAvatarURL;
             originalUserProps.getBannerURL = replacedUser.getBannerURL;
+            originalUserProps.getGlobalName = replacedUser.getGlobalName;
         }
 
         currentReplacedUserId = replacedId;
@@ -273,12 +288,20 @@ export async function spoofUser() {
                 } else if (prop === "bio") {
                     const targetProfile = UserProfileStore?.getUserProfile?.(targetId);
                     replacedUser.bio = targetProfile?.bio ?? targetUser.bio;
+                } else if (prop === "global_name" || prop === "globalName") {
+                    const targetName = targetUser.globalName || targetUser.global_name || targetUser.username;
+                    if (targetName) replacedUser[prop] = targetName;
                 } else {
                     if (targetUser[prop] !== undefined) {
                         replacedUser[prop] = targetUser[prop];
                     }
                 }
             }
+
+            replacedUser.getGlobalName = () => {
+                const tUser = getUser(targetId);
+                return tUser?.globalName || tUser?.global_name || tUser?.username || originalUserProps.globalName;
+            };
 
             replacedUser.getAvatarURL = (guildId?: string, size?: number, canAnimate?: boolean) => {
                 const tUser = getUser(targetId);
@@ -316,10 +339,13 @@ export function restoreOriginalUser() {
                 try { replacedUser[prop] = originalUserProps[prop]; } catch (_) {}
             }
             if (originalUserProps.getAvatarURL) replacedUser.getAvatarURL = originalUserProps.getAvatarURL;
-            else try { delete replacedUser.getAvatarURL; } catch (_) {}
+            else try { delete realUser.getAvatarURL; } catch (_) {}
 
             if (originalUserProps.getBannerURL) replacedUser.getBannerURL = originalUserProps.getBannerURL;
-            else try { delete replacedUser.getBannerURL; } catch (_) {}
+            else try { delete realUser.getBannerURL; } catch (_) {}
+
+            if (originalUserProps.getGlobalName) replacedUser.getGlobalName = originalUserProps.getGlobalName;
+            else try { delete realUser.getGlobalName; } catch (_) {}
 
             if (FluxDispatcher?.dispatch) {
                 try { FluxDispatcher.dispatch({ type: "USER_UPDATE", user: replacedUser }); } catch (_) {}
@@ -344,6 +370,38 @@ export function onLoad() {
                 }
             })
         );
+    }
+
+    const NameUtils = getNameUtils();
+    if (NameUtils) {
+        if (typeof NameUtils.getName === "function") {
+            unpatches.push(
+                instead("getName", NameUtils, (args, orig) => {
+                    const [user] = args;
+                    if (hasSpoofed && currentReplacedUserId && user && (user.id === currentReplacedUserId || user.id === storage.targetUserId)) {
+                        const targetUser = getUser(storage.targetUserId);
+                        if (targetUser) {
+                            return targetUser.globalName || targetUser.global_name || targetUser.username;
+                        }
+                    }
+                    return orig.apply(NameUtils, args);
+                })
+            );
+        }
+        if (typeof NameUtils.getGlobalName === "function") {
+            unpatches.push(
+                instead("getGlobalName", NameUtils, (args, orig) => {
+                    const [user] = args;
+                    if (hasSpoofed && currentReplacedUserId && user && (user.id === currentReplacedUserId || user.id === storage.targetUserId)) {
+                        const targetUser = getUser(storage.targetUserId);
+                        if (targetUser) {
+                            return targetUser.globalName || targetUser.global_name || targetUser.username;
+                        }
+                    }
+                    return orig.apply(NameUtils, args);
+                })
+            );
+        }
     }
 
     const IconUtils = getIconUtils();
@@ -420,8 +478,9 @@ export function onLoad() {
                     if (hasSpoofed && currentReplacedUserId && userId === currentReplacedUserId && member) {
                         const targetId = storage.targetUserId;
                         const targetUser = targetId ? getUser(targetId) : null;
-                        const targetName = targetUser?.globalName || targetUser?.username;
-                        const res = { ...member };
+                        const targetName = targetUser?.globalName || targetUser?.global_name || targetUser?.username;
+                        const replacedUser = getUser(currentReplacedUserId);
+                        const res = { ...member, user: replacedUser || member.user };
                         if (targetName) res.nick = targetName;
                         if (storage.customJoinedServer) {
                             const parsed = new Date(storage.customJoinedServer);
@@ -441,7 +500,7 @@ export function onLoad() {
                     if (hasSpoofed && currentReplacedUserId && userId === currentReplacedUserId) {
                         const targetId = storage.targetUserId;
                         const targetUser = targetId ? getUser(targetId) : null;
-                        const targetName = targetUser?.globalName || targetUser?.username;
+                        const targetName = targetUser?.globalName || targetUser?.global_name || targetUser?.username;
                         if (targetName) return targetName;
                     }
                     return orig.apply(GuildMemberStore, args);
@@ -474,7 +533,7 @@ export function onLoad() {
                     if (hasSpoofed && currentReplacedUserId && userId === currentReplacedUserId) {
                         const targetId = storage.targetUserId;
                         const targetUser = targetId ? getUser(targetId) : null;
-                        const targetName = targetUser?.globalName || targetUser?.username;
+                        const targetName = targetUser?.globalName || targetUser?.global_name || targetUser?.username;
                         if (targetName) return targetName;
                     }
                     return orig.apply(RelationshipStore, args);
