@@ -1,0 +1,15 @@
+{
+    "name": "ReplaceUserLocallyMobile",
+    "description": "Thay thế một người dùng bất kỳ (Replaced User ID) thành một người dùng khác (Target User ID) trên thiết bị Android (Kettu/Vendetta).",
+    "authors": [
+        {
+            "name": "Gemini",
+            "id": "0"
+        }
+    ],
+    "main": "index.js",
+    "vendetta": {
+        "icon": "ic_person"
+    },
+    "hash": "3da69e99415bc80e6c15173337f62ce506e89f9b5ec7de5622907974904ef72a"
+}

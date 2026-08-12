@@ -1,0 +1,15 @@
+{
+    "name": "FakeUserLocallyMobile",
+    "description": "Giả mạo người dùng khác trên màn hình thiết bị Android (Kettu/Vendetta) bằng cách can thiệp trực tiếp vào bộ nhớ (an toàn, giữ nguyên ID thật).",
+    "authors": [
+        {
+            "name": "Gemini",
+            "id": "0"
+        }
+    ],
+    "main": "index.js",
+    "vendetta": {
+        "icon": "ic_person"
+    },
+    "hash": "9e0f0f72bd4534ff2f4e848e92d06301493d8dcd1765ea9dcfdce43d686e0947"
+}
