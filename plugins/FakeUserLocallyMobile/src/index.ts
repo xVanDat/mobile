@@ -7,6 +7,7 @@ import Settings from "./Settings";
 
 const { proxy: storage } = createProxy({
     targetUserId: "",
+    customAvatarUrl: "",
     copySpoofedId: true,
     hideBadges: false,
     customJoinedDiscord: "",
@@ -15,6 +16,9 @@ const { proxy: storage } = createProxy({
 });
 
 export { storage };
+
+// Cache for target user data fetched via REST API
+const targetCache: Record<string, any> = {};
 
 // Dynamic store and module resolvers with robust fallbacks
 const getUserStore = () => findByStoreName("UserStore") || findByProps("getCurrentUser") || findByProps("getUser");
@@ -25,6 +29,7 @@ const getSnowflakeUtils = () => findByProps("extractTimestamp");
 const getUserUtils = () => findByProps("getUser", "fetchProfile") || findByProps("getUser");
 const getProfileActions = () => findByProps("fetchProfile");
 const getIconUtils = () => findByProps("getUserAvatarURL") || findByProps("getUserAvatarSource") || findByProps("getAvatarURL");
+const getHTTP = () => findByProps("get", "post") || findByProps("getAPIBaseURL");
 
 export function getCurrentUser(): any {
     const store = getUserStore();
@@ -45,17 +50,21 @@ export function getCurrentUser(): any {
 
 export function getUser(id: string): any {
     const store = getUserStore();
-    if (!store) return null;
-    if (typeof store.getUser === "function") {
-        const u = store.getUser(id);
-        if (u) return u;
+    if (store) {
+        if (typeof store.getUser === "function") {
+            const u = store.getUser(id);
+            if (u) return u;
+        }
+        if (store._users && store._users[id]) return store._users[id];
+        if (store.users && store.users[id]) return store.users[id];
     }
-    if (store._users && store._users[id]) return store._users[id];
-    if (store.users && store.users[id]) return store.users[id];
-    return null;
+    return targetCache[id] || null;
 }
 
 export function buildAvatarUrl(user: any): string | null {
+    if (storage.customAvatarUrl) {
+        return storage.customAvatarUrl;
+    }
     if (!user) return null;
     if (user.avatar) {
         const ext = user.avatar.startsWith("a_") ? "gif" : "png";
@@ -165,6 +174,49 @@ export function enforceSpoof() {
     }
 }
 
+async function fetchUserData(id: string): Promise<any> {
+    try {
+        const UserUtils = getUserUtils();
+        if (UserUtils?.getUser) {
+            try { await UserUtils.getUser(id); } catch (_) {}
+        }
+
+        const ProfileActions = getProfileActions();
+        if (ProfileActions?.fetchProfile) {
+            try { await ProfileActions.fetchProfile(id, { guildId: undefined, withMutualGuilds: false }); } catch (_) {}
+        }
+
+        let user = getUser(id);
+        if (user && user.avatar) return user;
+
+        const HTTP = getHTTP();
+        if (HTTP?.get) {
+            const res = await HTTP.get({ url: `/users/${id}` });
+            const body = res?.body || res;
+            if (body && body.id) {
+                targetCache[id] = {
+                    id: body.id,
+                    username: body.username,
+                    globalName: body.global_name || body.username,
+                    avatar: body.avatar,
+                    avatarDecoration: body.avatar_decoration_data?.asset,
+                    avatarDecorationData: body.avatar_decoration_data,
+                    discriminator: body.discriminator || "0",
+                    banner: body.banner,
+                    bio: body.bio || "",
+                    publicFlags: body.public_flags || 0,
+                    pronouns: body.pronouns || ""
+                };
+                return targetCache[id];
+            }
+        }
+    } catch (e) {
+        console.error("[FakeUserLocallyMobile] Error fetching user data via REST:", e);
+    }
+
+    return getUser(id);
+}
+
 export async function spoofUser() {
     const targetId = storage.targetUserId;
     if (!targetId) {
@@ -179,19 +231,11 @@ export async function spoofUser() {
     }
 
     try {
-        const UserUtils = getUserUtils();
-        if (UserUtils?.getUser) {
-            try { await UserUtils.getUser(targetId); } catch (_) {}
-        }
+        showToast("[FakeUserLocallyMobile] Đang tải dữ liệu người dùng...");
+        const targetUser: any = await fetchUserData(targetId);
 
-        const ProfileActions = getProfileActions();
-        if (ProfileActions?.fetchProfile) {
-            try { await ProfileActions.fetchProfile(targetId, { guildId: undefined, withMutualGuilds: false }); } catch (_) {}
-        }
-
-        const targetUser: any = getUser(targetId);
-        if (!targetUser) {
-            showToast("[FakeUserLocallyMobile] Lỗi: Không thể lấy dữ liệu mục tiêu. ID có đúng không?");
+        if (!targetUser && !storage.customAvatarUrl) {
+            showToast("[FakeUserLocallyMobile] Lỗi: Không thể lấy dữ liệu mục tiêu. Kiểm tra lại ID!");
             return;
         }
 
@@ -204,20 +248,24 @@ export async function spoofUser() {
         }
 
         const UserProfileStore = getUserProfileStore();
-        for (const prop of visualProps) {
-            if (prop === "publicFlags") {
-                realUser.publicFlags = storage.hideBadges ? 0 : targetUser.publicFlags;
-            } else if (prop === "bio") {
-                const targetProfile = UserProfileStore?.getUserProfile?.(targetId);
-                realUser.bio = targetProfile?.bio ?? targetUser.bio;
-            } else {
-                realUser[prop] = targetUser[prop];
+        if (targetUser) {
+            for (const prop of visualProps) {
+                if (prop === "publicFlags") {
+                    realUser.publicFlags = storage.hideBadges ? 0 : targetUser.publicFlags;
+                } else if (prop === "bio") {
+                    const targetProfile = UserProfileStore?.getUserProfile?.(targetId);
+                    realUser.bio = targetProfile?.bio ?? targetUser.bio;
+                } else {
+                    if (targetUser[prop] !== undefined) {
+                        realUser[prop] = targetUser[prop];
+                    }
+                }
             }
         }
 
         realUser.getAvatarURL = (guildId?: string, size?: number, canAnimate?: boolean) => {
             const tUser = getUser(targetId);
-            if (tUser) return buildAvatarUrl(tUser);
+            if (tUser || storage.customAvatarUrl) return buildAvatarUrl(tUser);
             return originalUserProps.getAvatarURL ? originalUserProps.getAvatarURL.call(realUser, guildId, size, canAnimate) : null;
         };
 
@@ -290,7 +338,7 @@ export function onLoad() {
                     const realUser = getCurrentUser();
                     if (hasSpoofed && realUser && user && (user.id === realUser.id || user.id === storage.targetUserId)) {
                         const targetUser = getUser(storage.targetUserId);
-                        if (targetUser) {
+                        if (targetUser || storage.customAvatarUrl) {
                             const url = buildAvatarUrl(targetUser);
                             if (url) return url;
                         }
@@ -307,7 +355,7 @@ export function onLoad() {
                     const realUser = getCurrentUser();
                     if (hasSpoofed && realUser && user && (user.id === realUser.id || user.id === storage.targetUserId)) {
                         const targetUser = getUser(storage.targetUserId);
-                        if (targetUser) {
+                        if (targetUser || storage.customAvatarUrl) {
                             const url = buildAvatarUrl(targetUser);
                             if (url) return { uri: url };
                         }

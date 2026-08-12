@@ -20,6 +20,15 @@ export default function Settings() {
                 placeholderTextColor="#888"
             />
 
+            <Text style={styles.label}>Custom Avatar URL (Tùy chọn Link ảnh Avatar):</Text>
+            <TextInput
+                style={styles.input}
+                value={storage.customAvatarUrl}
+                onChangeText={(val: string) => { storage.customAvatarUrl = val.trim(); }}
+                placeholder="https://... (Để trống nếu dùng Avatar gốc từ ID)"
+                placeholderTextColor="#888"
+            />
+
             <View style={styles.switchRow}>
                 <Text style={styles.switchLabel}>Tự động sao chép Target User ID</Text>
                 <Switch

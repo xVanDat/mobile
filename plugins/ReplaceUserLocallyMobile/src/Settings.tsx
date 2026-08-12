@@ -20,12 +20,21 @@ export default function Settings() {
                 placeholderTextColor="#888"
             />
 
-            <Text style={styles.label}>Target User ID (ID người dùng mục tiêu):</Text>
+            <Text style={styles.label}>Target User ID (ID người dùng đích):</Text>
             <TextInput
                 style={styles.input}
                 value={storage.targetUserId}
                 onChangeText={(val: string) => { storage.targetUserId = val.trim(); }}
                 placeholder="Nhập User ID mục tiêu..."
+                placeholderTextColor="#888"
+            />
+
+            <Text style={styles.label}>Custom Avatar URL (Tùy chọn Link ảnh Avatar):</Text>
+            <TextInput
+                style={styles.input}
+                value={storage.customAvatarUrl}
+                onChangeText={(val: string) => { storage.customAvatarUrl = val.trim(); }}
+                placeholder="https://... (Để trống nếu dùng Avatar gốc từ ID)"
                 placeholderTextColor="#888"
             />
 
@@ -73,7 +82,7 @@ export default function Settings() {
             />
 
             <TouchableOpacity style={styles.button} onPress={() => spoofUser()}>
-                <Text style={styles.buttonText}>Áp dụng / Thay thế User</Text>
+                <Text style={styles.buttonText}>Áp dụng / Spoof User</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={[styles.button, styles.restoreButton]} onPress={() => restoreOriginalUser()}>
