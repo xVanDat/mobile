@@ -5,18 +5,31 @@ import { showToast } from "@vendetta/ui/toasts";
 import { createProxy } from "@vendetta/storage";
 import Settings from "./Settings";
 
-const { proxy: storage } = createProxy({
-    replacedUserId: "",
-    targetUserId: "",
-    customAvatarUrl: "",
-    copySpoofedId: true,
-    hideBadges: false,
-    customJoinedDiscord: "",
-    customJoinedServer: "",
-    customFriendsSince: ""
-});
+declare const vendetta: any;
 
-export { storage };
+// Use persistent MMKV storage from Vendetta plugin scope, fallback to createProxy
+export const storage: any = (typeof vendetta !== "undefined" && vendetta?.plugin?.storage)
+    ? vendetta.plugin.storage
+    : createProxy({
+        replacedUserId: "",
+        targetUserId: "",
+        customAvatarUrl: "",
+        copySpoofedId: true,
+        hideBadges: false,
+        customJoinedDiscord: "",
+        customJoinedServer: "",
+        customFriendsSince: ""
+    }).proxy;
+
+// Set default values if not set yet
+storage.replacedUserId ??= "";
+storage.targetUserId ??= "";
+storage.customAvatarUrl ??= "";
+storage.copySpoofedId ??= true;
+storage.hideBadges ??= false;
+storage.customJoinedDiscord ??= "";
+storage.customJoinedServer ??= "";
+storage.customFriendsSince ??= "";
 
 // Cache for target user data fetched via REST API
 const targetCache: Record<string, any> = {};
@@ -144,7 +157,7 @@ export function enforceSpoof() {
                         changed = true;
                     }
                 } else {
-                    if (replacedUser[prop] !== targetUser[prop]) {
+                    if (targetUser[prop] !== undefined && replacedUser[prop] !== targetUser[prop]) {
                         replacedUser[prop] = targetUser[prop];
                         changed = true;
                     }
@@ -153,7 +166,7 @@ export function enforceSpoof() {
 
             replacedUser.getAvatarURL = (guildId?: string, size?: number, canAnimate?: boolean) => {
                 const tUser = getUser(targetId);
-                if (tUser) return buildAvatarUrl(tUser);
+                if (tUser || storage.customAvatarUrl) return buildAvatarUrl(tUser);
                 return originalUserProps.getAvatarURL ? originalUserProps.getAvatarURL.call(replacedUser, guildId, size, canAnimate) : null;
             };
 
@@ -399,35 +412,75 @@ export function onLoad() {
     }
 
     const GuildMemberStore = getGuildMemberStore();
-    if (GuildMemberStore && typeof GuildMemberStore.getMember === "function") {
-        unpatches.push(
-            after("getMember", GuildMemberStore, (args, member) => {
-                const [, userId] = args;
-                if (hasSpoofed && currentReplacedUserId && userId === currentReplacedUserId && member && storage.customJoinedServer) {
-                    const parsed = new Date(storage.customJoinedServer);
-                    if (!isNaN(parsed.getTime())) {
-                        return { ...member, joinedAt: parsed.toISOString() };
+    if (GuildMemberStore) {
+        if (typeof GuildMemberStore.getMember === "function") {
+            unpatches.push(
+                after("getMember", GuildMemberStore, (args, member) => {
+                    const [, userId] = args;
+                    if (hasSpoofed && currentReplacedUserId && userId === currentReplacedUserId && member) {
+                        const targetId = storage.targetUserId;
+                        const targetUser = targetId ? getUser(targetId) : null;
+                        const targetName = targetUser?.globalName || targetUser?.username;
+                        const res = { ...member };
+                        if (targetName) res.nick = targetName;
+                        if (storage.customJoinedServer) {
+                            const parsed = new Date(storage.customJoinedServer);
+                            if (!isNaN(parsed.getTime())) res.joinedAt = parsed.toISOString();
+                        }
+                        return res;
                     }
-                }
-                return member;
-            })
-        );
+                    return member;
+                })
+            );
+        }
+
+        if (typeof GuildMemberStore.getNick === "function") {
+            unpatches.push(
+                instead("getNick", GuildMemberStore, (args, orig) => {
+                    const [, userId] = args;
+                    if (hasSpoofed && currentReplacedUserId && userId === currentReplacedUserId) {
+                        const targetId = storage.targetUserId;
+                        const targetUser = targetId ? getUser(targetId) : null;
+                        const targetName = targetUser?.globalName || targetUser?.username;
+                        if (targetName) return targetName;
+                    }
+                    return orig.apply(GuildMemberStore, args);
+                })
+            );
+        }
     }
 
     const RelationshipStore = getRelationshipStore();
-    if (RelationshipStore && typeof RelationshipStore.getSince === "function") {
-        unpatches.push(
-            instead("getSince", RelationshipStore, (args, orig) => {
-                const [userId] = args;
-                if (hasSpoofed && currentReplacedUserId && userId === currentReplacedUserId && storage.customFriendsSince) {
-                    const parsed = new Date(storage.customFriendsSince);
-                    if (!isNaN(parsed.getTime())) {
-                        return parsed.toISOString();
+    if (RelationshipStore) {
+        if (typeof RelationshipStore.getSince === "function") {
+            unpatches.push(
+                instead("getSince", RelationshipStore, (args, orig) => {
+                    const [userId] = args;
+                    if (hasSpoofed && currentReplacedUserId && userId === currentReplacedUserId && storage.customFriendsSince) {
+                        const parsed = new Date(storage.customFriendsSince);
+                        if (!isNaN(parsed.getTime())) {
+                            return parsed.toISOString();
+                        }
                     }
-                }
-                return orig.apply(RelationshipStore, args);
-            })
-        );
+                    return orig.apply(RelationshipStore, args);
+                })
+            );
+        }
+
+        if (typeof RelationshipStore.getNickname === "function") {
+            unpatches.push(
+                instead("getNickname", RelationshipStore, (args, orig) => {
+                    const [userId] = args;
+                    if (hasSpoofed && currentReplacedUserId && userId === currentReplacedUserId) {
+                        const targetId = storage.targetUserId;
+                        const targetUser = targetId ? getUser(targetId) : null;
+                        const targetName = targetUser?.globalName || targetUser?.username;
+                        if (targetName) return targetName;
+                    }
+                    return orig.apply(RelationshipStore, args);
+                })
+            );
+        }
     }
 
     const UserProfileStore = getUserProfileStore();
@@ -479,7 +532,7 @@ export function onLoad() {
     }
 
     if (storage.replacedUserId && storage.targetUserId) {
-        spoofUser();
+        setTimeout(() => { spoofUser(); }, 500);
     }
 }
 
