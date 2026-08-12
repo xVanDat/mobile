@@ -24,6 +24,7 @@ const getUserProfileStore = () => findByStoreName("UserProfileStore") || findByP
 const getSnowflakeUtils = () => findByProps("extractTimestamp");
 const getUserUtils = () => findByProps("getUser", "fetchProfile") || findByProps("getUser");
 const getProfileActions = () => findByProps("fetchProfile");
+const getIconUtils = () => findByProps("getUserAvatarURL") || findByProps("getUserAvatarSource") || findByProps("getAvatarURL");
 
 export function getCurrentUser(): any {
     const store = getUserStore();
@@ -54,6 +55,30 @@ export function getUser(id: string): any {
     return null;
 }
 
+export function buildAvatarUrl(user: any): string | null {
+    if (!user) return null;
+    if (user.avatar) {
+        const ext = user.avatar.startsWith("a_") ? "gif" : "png";
+        return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${ext}?size=1024`;
+    }
+    try {
+        const discriminator = user.discriminator && user.discriminator !== "0" ? Number(user.discriminator) : 0;
+        const index = discriminator ? discriminator % 5 : Number(BigInt(user.id) >> 22n) % 5;
+        return `https://cdn.discordapp.com/embed/avatars/${index}.png`;
+    } catch (_) {
+        return `https://cdn.discordapp.com/embed/avatars/0.png`;
+    }
+}
+
+export function buildBannerUrl(user: any): string | null {
+    if (!user) return null;
+    if (user.banner) {
+        const ext = user.banner.startsWith("a_") ? "gif" : "png";
+        return `https://cdn.discordapp.com/banners/${user.id}/${user.banner}.${ext}?size=1024`;
+    }
+    return null;
+}
+
 let unpatches: (() => void)[] = [];
 let originalUserProps: Record<string, any> = {};
 let hasSpoofed = false;
@@ -71,9 +96,6 @@ const visualProps = [
     "publicFlags",
     "pronouns"
 ];
-
-let boundGetAvatarURL: any = null;
-let boundGetBannerURL: any = null;
 
 function processCopyText(text: string): string {
     if (!hasSpoofed || !storage.copySpoofedId) return text;
@@ -119,14 +141,17 @@ export function enforceSpoof() {
                 }
             }
 
-            if (boundGetAvatarURL && realUser.getAvatarURL !== boundGetAvatarURL) {
-                realUser.getAvatarURL = boundGetAvatarURL;
-                changed = true;
-            }
-            if (boundGetBannerURL && realUser.getBannerURL !== boundGetBannerURL) {
-                realUser.getBannerURL = boundGetBannerURL;
-                changed = true;
-            }
+            realUser.getAvatarURL = (guildId?: string, size?: number, canAnimate?: boolean) => {
+                const tUser = getUser(targetId);
+                if (tUser) return buildAvatarUrl(tUser);
+                return originalUserProps.getAvatarURL ? originalUserProps.getAvatarURL.call(realUser, guildId, size, canAnimate) : null;
+            };
+
+            realUser.getBannerURL = (guildId?: string, size?: number, canAnimate?: boolean) => {
+                const tUser = getUser(targetId);
+                if (tUser) return buildBannerUrl(tUser);
+                return originalUserProps.getBannerURL ? originalUserProps.getBannerURL.call(realUser, guildId, size, canAnimate) : null;
+            };
         } finally {
             isEnforcing = false;
         }
@@ -190,14 +215,17 @@ export async function spoofUser() {
             }
         }
 
-        if (typeof targetUser.getAvatarURL === "function") {
-            boundGetAvatarURL = targetUser.getAvatarURL.bind(targetUser);
-            realUser.getAvatarURL = boundGetAvatarURL;
-        }
-        if (typeof targetUser.getBannerURL === "function") {
-            boundGetBannerURL = targetUser.getBannerURL.bind(targetUser);
-            realUser.getBannerURL = boundGetBannerURL;
-        }
+        realUser.getAvatarURL = (guildId?: string, size?: number, canAnimate?: boolean) => {
+            const tUser = getUser(targetId);
+            if (tUser) return buildAvatarUrl(tUser);
+            return originalUserProps.getAvatarURL ? originalUserProps.getAvatarURL.call(realUser, guildId, size, canAnimate) : null;
+        };
+
+        realUser.getBannerURL = (guildId?: string, size?: number, canAnimate?: boolean) => {
+            const tUser = getUser(targetId);
+            if (tUser) return buildBannerUrl(tUser);
+            return originalUserProps.getBannerURL ? originalUserProps.getBannerURL.call(realUser, guildId, size, canAnimate) : null;
+        };
 
         hasSpoofed = true;
         enforceSpoof();
@@ -222,8 +250,11 @@ export function restoreOriginalUser() {
             for (const prop of Object.keys(originalUserProps)) {
                 try { realUser[prop] = originalUserProps[prop]; } catch (_) {}
             }
-            try { delete realUser.getAvatarURL; } catch (_) {}
-            try { delete realUser.getBannerURL; } catch (_) {}
+            if (originalUserProps.getAvatarURL) realUser.getAvatarURL = originalUserProps.getAvatarURL;
+            else try { delete realUser.getAvatarURL; } catch (_) {}
+
+            if (originalUserProps.getBannerURL) realUser.getBannerURL = originalUserProps.getBannerURL;
+            else try { delete realUser.getBannerURL; } catch (_) {}
 
             if (FluxDispatcher?.dispatch) {
                 try { FluxDispatcher.dispatch({ type: "CURRENT_USER_UPDATE", user: realUser }); } catch (_) {}
@@ -235,8 +266,6 @@ export function restoreOriginalUser() {
     }
     hasSpoofed = false;
     originalUserProps = {};
-    boundGetAvatarURL = null;
-    boundGetBannerURL = null;
 }
 
 export function onLoad() {
@@ -250,6 +279,60 @@ export function onLoad() {
                 }
             })
         );
+    }
+
+    const IconUtils = getIconUtils();
+    if (IconUtils) {
+        if (typeof IconUtils.getUserAvatarURL === "function") {
+            unpatches.push(
+                instead("getUserAvatarURL", IconUtils, (args, orig) => {
+                    const [user] = args;
+                    const realUser = getCurrentUser();
+                    if (hasSpoofed && realUser && user && (user.id === realUser.id || user.id === storage.targetUserId)) {
+                        const targetUser = getUser(storage.targetUserId);
+                        if (targetUser) {
+                            const url = buildAvatarUrl(targetUser);
+                            if (url) return url;
+                        }
+                    }
+                    return orig.apply(IconUtils, args);
+                })
+            );
+        }
+
+        if (typeof IconUtils.getUserAvatarSource === "function") {
+            unpatches.push(
+                instead("getUserAvatarSource", IconUtils, (args, orig) => {
+                    const [user] = args;
+                    const realUser = getCurrentUser();
+                    if (hasSpoofed && realUser && user && (user.id === realUser.id || user.id === storage.targetUserId)) {
+                        const targetUser = getUser(storage.targetUserId);
+                        if (targetUser) {
+                            const url = buildAvatarUrl(targetUser);
+                            if (url) return { uri: url };
+                        }
+                    }
+                    return orig.apply(IconUtils, args);
+                })
+            );
+        }
+
+        if (typeof IconUtils.getUserBannerURL === "function") {
+            unpatches.push(
+                instead("getUserBannerURL", IconUtils, (args, orig) => {
+                    const [user] = args;
+                    const realUser = getCurrentUser();
+                    if (hasSpoofed && realUser && user && (user.id === realUser.id || user.id === storage.targetUserId)) {
+                        const targetUser = getUser(storage.targetUserId);
+                        if (targetUser) {
+                            const url = buildBannerUrl(targetUser);
+                            if (url) return url;
+                        }
+                    }
+                    return orig.apply(IconUtils, args);
+                })
+            );
+        }
     }
 
     const SnowflakeUtils = getSnowflakeUtils();
